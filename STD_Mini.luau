@@ -78,7 +78,7 @@ local CFG = {
     -- the hub still comes back after every join. bump nothing here by hand:
     -- it is the exact URL the loadstring uses
     ReloadURL      = "https://raw.githubusercontent.com/BlackSoougy/skibidi-defense-door-farm/main/STD_Mini.luau",
-    Build          = "2026-11-24.2",
+    Build          = "2026-11-24.3",
 
     -- loaded alongside the hub, once per place, after the boot gate. anything
     -- that belongs next to this but is not part of it goes here - the hub's own
@@ -908,13 +908,16 @@ end
 -- candidates, best first:
 --   1. a portal with somebody holding Meguna or Gojo Awakened always wins,
 --   2. then the strongest deck,
---   3. then the `min players` preference, then the headcount, then the index.
--- The deck leads the count on purpose: with nobody holding a wanted unit, the
--- order is "take the strongest one", not "take the fullest one". `min` only
--- decides between portals whose decks are equal, and a portal nobody has walked
--- into yet is never a candidate - there is nobody to score and nothing to join
-function Anniv.ranked(list)
+--   3. then the headcount, then the index.
+--
+-- the `min players` setting is a hard gate again: a portal below it is not a
+-- candidate at all, so the hub sits and waits for one of them to fill instead of
+-- hopping into a 3/10 nobody else is going to join. a full portal is never a
+-- candidate either - there is no slot in it. `force` is the manual pass, which
+-- ignores the gate on purpose: pressing JOIN NOW is you saying "this one, now"
+function Anniv.ranked(list, force)
     local out = {}
+    local floor = force and 1 or Anniv.min
     for _, e in ipairs(Anniv.openList(list)) do
         local vip, names, seen, power, best = Roster.score(e)
         e.vip = vip
@@ -922,15 +925,13 @@ function Anniv.ranked(list)
         e.seen = seen
         e.power = power
         e.best = best
-        if e.n < e.max and e.n >= 1 then table.insert(out, e) end
+        if e.n < e.max and e.n >= floor then table.insert(out, e) end
     end
     table.sort(out, function(a, b)
         local av, bv = a.vip or 0, b.vip or 0
         if av ~= bv then return av > bv end
         local ap, bp = a.power or 0, b.power or 0
         if ap ~= bp then return ap > bp end
-        local af, bf = a.n >= Anniv.min, b.n >= Anniv.min
-        if af ~= bf then return af end
         if a.n == b.n then return a.idx < b.idx end
         return a.n > b.n
     end)
@@ -945,7 +946,7 @@ function Anniv.summary(list)
         local mark = ""
         if (e.vip or 0) > 0 then
             mark = "*"
-        elseif e.open and e.n >= 1 and e.n < e.max then
+        elseif e.open and e.n >= Anniv.min and e.n < e.max then
             mark = "+"
         end
         table.insert(parts, ("%d/%d%s"):format(e.n, e.max, mark))
@@ -998,7 +999,7 @@ function Anniv.enter(model)
     return false
 end
 
-function Anniv.step()
+function Anniv.step(force)
     local list = Anniv.scan()
     Anniv.list = list
     if #list == 0 then
@@ -1034,28 +1035,37 @@ function Anniv.step()
         end
     end
 
-    local q = Anniv.ranked(open)
+    local q = Anniv.ranked(open, force)
     -- what the panel shows: the strongest candidate, whether or not it is being
     -- entered right now. when nothing qualifies it is the best of what is open,
-    -- so the deck number still tells you what the server looks like
+    -- so the count and the deck still tell you what the server looks like
     Anniv.bestNow = q[1] or open[1]
     if #q == 0 then
-        -- the only two ways to get here: every open portal is still reading 0/10,
-        -- or every open portal is already at max. saying "nobody inside yet" for a
-        -- full portal would be a lie, and the wait is different in each case
+        -- nothing to join. three different reasons, and the wait is different in
+        -- each, so say which one it is instead of a single vague "waiting"
         local e = open[1]
         if e.n >= e.max then
             Anniv.state = "full"
-            Anniv.status = ("open but full - waiting for a slot (%d/%d)"):format(e.n, e.max)
+            Anniv.status = ("all open portals are full - waiting for a slot (%d/%d)"):format(
+                e.n, e.max)
+        elseif e.n < Anniv.min then
+            Anniv.state = "waiting"
+            Anniv.status = ("waiting for %d+  ·  best %d/%d  ·  deck %s"):format(
+                Anniv.min, e.n, e.max, fmtPower(e.power or 0))
         else
             Anniv.state = "waiting"
-            Anniv.status = ("open, nobody inside yet (best %d/%d, deck %s)"):format(
-                e.n, e.max, fmtPower(e.power or 0))
+            Anniv.status = ("waiting for a joinable portal (best %d/%d)"):format(e.n, e.max)
         end
         return
     end
 
-    Anniv.state = ((q[1].vip or 0) > 0) and "joining" or "joining strongest"
+    if q[1].n < Anniv.min then
+        Anniv.state = "joining below min"      -- only reachable from a manual pass
+    elseif (q[1].vip or 0) > 0 then
+        Anniv.state = "joining"
+    else
+        Anniv.state = "joining strongest"
+    end
     for _, e in ipairs(q) do
         local tag = ""
         if (e.vip or 0) > 0 then
@@ -1474,7 +1484,9 @@ end
 -- WIRING
 --=============================================================
 local function setMin(n)
-    n = math.clamp(math.floor(tonumber(n) or 7), 1, 10)
+    -- 9, not 10: a portal at its cap has no slot left, so a minimum of 10 could
+    -- never be satisfied and the hub would sit there forever
+    n = math.clamp(math.floor(tonumber(n) or 7), 1, 9)
     Anniv.min = n
     CFG.MinPlayers = n
     minChip.Text = tostring(n)
@@ -1487,7 +1499,7 @@ plusBtn.MouseButton1Click:Connect(function() setMin(Anniv.min + 1) end)
 joinNow.MouseButton1Click:Connect(function()
     if not Anniv.on then joinSw.set(true) end
     task.spawn(function()
-        pcall(Anniv.step)
+        pcall(Anniv.step, true)   -- manual: ignore the min gate, take the best
         log("event: manual pass - " .. Anniv.status)
     end)
 end)
@@ -1617,8 +1629,10 @@ local function refresh()
         evStatus.Text = "auto join off"
     elseif Anniv.bestNow then
         local b = Anniv.bestNow
-        evStatus.Text = ("best %d/%d  ·  deck %s  ·  %d vip  ·  %s"):format(
-            b.n or 0, b.max or 0, fmtPower(b.power or 0), b.vip or 0, Anniv.state or "-")
+        -- the min belongs on this line now that it is a gate: without it the
+        -- panel says "best 4/10" and nothing about what it is waiting for
+        evStatus.Text = ("min %d  ·  best %d/%d  ·  deck %s  ·  %s"):format(
+            Anniv.min, b.n or 0, b.max or 0, fmtPower(b.power or 0), Anniv.state or "-")
     else
         evStatus.Text = Anniv.status
     end
@@ -1712,7 +1726,7 @@ api.Plaza     = Plaza
 api.Show      = function(v) frame.Visible = (v ~= false) end
 api.Toggle    = function() frame.Visible = not frame.Visible end
 api.SetMin    = setMin
-api.JoinNow   = function() pcall(Anniv.step) end
+api.JoinNow   = function() pcall(Anniv.step, true) end
 api.ExitNow   = function() return AutoExit.fire() end
 api.Log       = function() return table.concat(Hub.log, "\n") end
 api.Boot      = Boot

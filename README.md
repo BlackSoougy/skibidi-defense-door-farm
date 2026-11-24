@@ -119,15 +119,19 @@ off (stored in `STD_Mini_settings.txt`).
 
 ## Which portal it joins
 
-A candidate is a portal that is open, has at least one player inside, and is not
-full. Then:
+A candidate is a portal that is open, holds at least `min players` (default 7),
+and is not full. Below the minimum it is not a candidate at all — the hub waits
+for a portal to fill rather than hopping into a 3/10 nobody else will join. If
+everything is empty or 10/10 it simply waits. Among the portals that qualify:
 
 | # | key |
 | --- | --- |
 | 1 | somebody inside holds **Meguna** (`KingOfCursesEvo`) or **Gojo Awakened** (`StrongestSorcererEvo`) |
 | 2 | the strongest deck — sum of the best 6 owned units by base damage |
-| 3 | `min players` met (a tiebreaker, not a gate) |
-| 4 | headcount, then portal index |
+| 3 | headcount, then portal index |
+
+`JOIN NOW` is the one way past the gate: it forces a pass with a floor of 1, and
+the status says `joining below min` so it is clear the gate was skipped.
 
 Player slots are read through `Remotes.GetOtherPlayerData` (the trade menu's own
 call), cached per user for 20s. A portal that just opened reads `0/10` for a
