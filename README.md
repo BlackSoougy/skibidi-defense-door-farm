@@ -109,6 +109,9 @@ auto-join the piñata portals, leave the match when it ends, and stay awake.
 loadstring(game:HttpGet("https://raw.githubusercontent.com/BlackSoougy/skibidi-defense-door-farm/main/STD_Mini.luau"))()
 ```
 
+This one line is the whole thing: the hub, its own anti-AFK, and the companion
+`unrexl/Scripts` AntiAfk listed in `CFG.ExtraScripts`. Nothing else to paste.
+
 Safe to put in **autoexec**: it waits for `game:IsLoaded()`, `LocalPlayer`,
 `PlayerGui`, `ReplicatedStorage.Configs.Towers` and the character before it
 touches anything, and the switch `INJECT // BOOT` in the panel turns that wait
@@ -143,6 +146,11 @@ moment, so the hub waits for the counts to replicate before deciding.
 - **Survives its own teleports** — the script queues itself for the next
   teleport and reloads from the workspace copy or, failing that, from this file's
   raw URL. A plain loadstring is enough; nothing has to be saved locally.
+- **Companion scripts** — `CFG.ExtraScripts` is a list of URLs loaded alongside
+  the hub, once per place, each in its own thread with its own `pcall`, so a
+  companion that loops or throws cannot take the hub down. It currently carries
+  `unrexl/Scripts` AntiAfk; the same single loadstring brings both, and the
+  INJECT line reports `extra 1/1`.
 
 ## API
 
@@ -151,5 +159,6 @@ local hub = getgenv().STD_Mini
 hub.Show(false)         hub.Toggle()
 hub.SetMin(7)           hub.JoinNow()      hub.ExitNow()
 hub.SetBoot(true)       hub.Boot.took      hub.Build
+hub.LoadExtra()         hub.Extra.done
 hub.Log()
 ```

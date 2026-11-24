@@ -78,7 +78,15 @@ local CFG = {
     -- the hub still comes back after every join. bump nothing here by hand:
     -- it is the exact URL the loadstring uses
     ReloadURL      = "https://raw.githubusercontent.com/BlackSoougy/skibidi-defense-door-farm/main/STD_Mini.luau",
-    Build          = "2026-11-24.1",
+    Build          = "2026-11-24.2",
+
+    -- loaded alongside the hub, once per place, after the boot gate. anything
+    -- that belongs next to this but is not part of it goes here - the hub's own
+    -- anti-afk walk is already built in, so these are extras, not requirements
+    ExtraScripts   = {
+        -- anti-afk, unrexl/Scripts
+        "https://raw.githubusercontent.com/unrexl/Scripts/refs/heads/main/AntiAfk9b7m",
+    },
 }
 
 local Players      = game:GetService("Players")
@@ -211,7 +219,7 @@ end
 
 -- the UI is built before the modules, and its switch callbacks run later, so
 -- the names have to exist as locals now or those closures would read globals
-local Anniv, AutoExit, Move, Plaza, AnnivStart, AnnivStop
+local Anniv, AutoExit, Move, Plaza, AnnivStart, AnnivStop, Extra
 
 local LOG_FILE = "STD_Mini_log_" .. LP.Name .. ".txt"
 local function log(...)
@@ -1529,6 +1537,66 @@ addConn(UIS.InputBegan:Connect(function(input, typing)
 end))
 
 --=============================================================
+-- COMPANION SCRIPTS
+--=============================================================
+-- things that belong alongside the hub instead of inside it. they load once per
+-- place, after the boot gate, each in its own thread with its own pcall - a
+-- companion that loops forever or throws cannot take the hub down with it, and
+-- the url is remembered in genv so re-injecting by hand does not stack a second
+-- copy of something that was only ever meant to run once
+Extra = { list = CFG.ExtraScripts or {}, ok = 0, bad = 0, done = {} }
+Hub.Extra = Extra
+
+function Extra.load()
+    local seen = getgenv().STD_Mini_Extra
+    if type(seen) ~= "table" then
+        seen = {}
+        getgenv().STD_Mini_Extra = seen
+    end
+    for _, url in ipairs(Extra.list) do
+        if not seen[url] then
+            seen[url] = true
+            Extra.done[url] = "loading"
+            task.spawn(function()
+                local host = tostring(url):match("^https?://([^/]+)") or tostring(url)
+                local src
+                for attempt = 1, 3 do
+                    local ok, body = pcall(function() return game:HttpGet(url) end)
+                    if ok and type(body) == "string" and #body > 200 then
+                        src = body
+                        break
+                    end
+                    if attempt < 3 then task.wait(2) end
+                end
+                if not src then
+                    seen[url] = nil          -- let a later LoadExtra try again
+                    Extra.bad = Extra.bad + 1
+                    Extra.done[url] = "download failed"
+                    log("extra: " .. host .. " failed to download")
+                    return
+                end
+                local fn, err = loadstring(src)
+                if not fn then
+                    seen[url] = nil
+                    Extra.bad = Extra.bad + 1
+                    Extra.done[url] = "compile error"
+                    log("extra: " .. host .. " does not compile - " .. tostring(err))
+                    return
+                end
+                Extra.ok = Extra.ok + 1
+                Extra.done[url] = "running"
+                log(("extra: %s started (%d KB)"):format(host, math.floor(#src / 1024)))
+                local ok2, err2 = pcall(fn)
+                if not ok2 then
+                    Extra.done[url] = "errored"
+                    log("extra: " .. host .. " errored - " .. tostring(err2))
+                end
+            end)
+        end
+    end
+end
+
+--=============================================================
 -- TICKER
 --=============================================================
 local function placeLabel()
@@ -1597,6 +1665,11 @@ local function refresh()
     else
         bootState, bootCol = ("waited %.1fs for the place"):format(Boot.took), C.good
     end
+    local n = #Extra.list
+    if n > 0 then
+        bootState = bootState .. ("  ·  extra %d/%d"):format(Extra.ok, n)
+        if Extra.bad > 0 then bootCol = C.gold end
+    end
     bootLbl.Text = "boot: " .. bootState
     bootLbl.TextColor3 = bootCol
 
@@ -1606,6 +1679,7 @@ Anniv.start()
 AutoExit.start()
 Move.start()
 Plaza.start()
+Extra.load()
 
 local tick = task.spawn(function()
     while Hub.alive do
@@ -1645,6 +1719,8 @@ api.Boot      = Boot
 api.SetBoot   = function(v) bootSw.set(v) end
 api.Build     = CFG.Build
 api.URL       = CFG.ReloadURL
+api.Extra     = Extra
+api.LoadExtra = function() Extra.load() end
 
 function api.destroy()
     Hub.alive = false
