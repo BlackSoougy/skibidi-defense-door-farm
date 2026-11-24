@@ -73,12 +73,23 @@ local CFG = {
     PlazaHome      = 17720162456,
     PlazaDelay     = 2,
 
+    -- server hop. a lobby with 12 people in it never fills six portals, so when
+    -- the event is closed and the place is quiet, go looking for a busier one
+    HopBelow       = 20,    -- hop when the lobby holds fewer than this
+    HopGrace       = 15,    -- seconds after landing before the count is trusted
+    HopCool        = 30,    -- minimum seconds between hops, across reloads too
+    HopGap         = 5,     -- seconds between checks
+    HopMax         = 8,     -- hops in a row before it stops trying for a while
+    HopRest        = 300,   -- seconds to rest after that. at 3am every server is
+                            -- empty and an endless hop every 30s is worse than
+                            -- sitting in one of them
+
     -- where this file is published. the teleport reload reads the workspace
     -- copy first and falls back to this, so a plain loadstring is enough and
     -- the hub still comes back after every join. bump nothing here by hand:
     -- it is the exact URL the loadstring uses
     ReloadURL      = "https://raw.githubusercontent.com/BlackSoougy/skibidi-defense-door-farm/main/STD_Mini.luau",
-    Build          = "2026-11-24.3",
+    Build          = "2026-11-24.4",
 
     -- loaded alongside the hub, once per place, after the boot gate. anything
     -- that belongs next to this but is not part of it goes here - the hub's own
@@ -218,8 +229,12 @@ local function addConn(c)
 end
 
 -- the UI is built before the modules, and its switch callbacks run later, so
--- the names have to exist as locals now or those closures would read globals
+-- the names have to exist as locals now or those closures would read globals.
+-- Hop is a table already, not just a name: the panel reads Hop.on while it is
+-- being built, so an empty forward declaration would index nil
 local Anniv, AutoExit, Move, Plaza, AnnivStart, AnnivStop, Extra
+local Hop = { on = true, below = CFG.HopBelow, cool = 0, last = 0, hops = 0,
+              tries = 0, online = 0, state = "idle", t0 = os.clock() }
 
 local LOG_FILE = "STD_Mini_log_" .. LP.Name .. ".txt"
 local function log(...)
@@ -404,7 +419,7 @@ gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 gui.Parent = parentGui()
 Hub.gui = gui
 
-local WIN_W, WIN_H = 480, 600
+local WIN_W, WIN_H = 480, 704
 
 -- whole pixels only. a window at x.5/y.5 puts every 1px line on a half pixel,
 -- which is exactly the blur and the stair-stepping on the corners
@@ -656,6 +671,24 @@ bootSw = switchRow(bootPanel, 12, 26, 432, "wait for game load", Boot.wait, func
            or "boot: next inject runs immediately")
 end)
 local bootLbl = mono("boot: -", 12, 48, 432, 16, bootPanel, 10, C.dim, C.uiB)
+
+--// ---------- hop panel ----------
+local hopPanel = glass(12, 594, 456, 96, frame, { name = "Hop" })
+mono("SERVER // HOP", 12, 8, 240, 16, hopPanel, 9, C.accent, C.display)
+
+local hopSw
+hopSw = switchRow(hopPanel, 12, 28, 432, "hop when the lobby is small", Hop.on, function(v)
+    Hop.on = v
+    Hop.cool = 0
+    Hop.t0 = os.clock()
+    log(v and "hop: looking for a busier lobby" or "hop: staying put")
+end)
+
+mono("min online", 12, 56, 110, 18, hopPanel, 10, C.dim)
+local hopMinus = tagBtn("-", 120, 52, 26, 24, hopPanel, 11)
+local hopChip = chip(hopPanel, tostring(Hop.below), C.accent, 150, 52, 42, 24, 11)
+local hopPlus = tagBtn("+", 196, 52, 26, 24, hopPanel, 11)
+local hopLbl = mono("online -  ·  hop below 20", 12, 78, 432, 16, hopPanel, 10, C.dim, C.uiB)
 
 --// ---------- log ----------
 
@@ -1481,6 +1514,137 @@ function Plaza.start()
 end
 
 --=============================================================
+-- SERVER HOP
+--=============================================================
+-- a lobby with 12 people in it never fills six portals, so when the event is
+-- closed and the place is quiet this goes looking for a busier one. the list
+-- comes from the public servers endpoint the web app itself uses, and the
+-- fullest joinable server wins. if the endpoint is blocked it falls back to a
+-- plain rejoin, which at least lands somewhere random instead of nowhere.
+--
+-- it deliberately does not hop while the event is running: an open portal at
+-- 6/10 is worth more than a gamble on another server, and leaving mid-round
+-- throws away the round for nothing
+Hub.Hop = Hop
+
+local HOP_FILE = "STD_Mini_hop.txt"
+
+-- both the cool-down and the run of hops have to survive the reload, because
+-- every hop restarts this script: without the file, a run of dead servers turns
+-- into a hop every 30 seconds forever
+do
+    local ok, raw = pcall(readfile, HOP_FILE)
+    if ok and type(raw) == "string" then
+        local when, tries = raw:match("^%s*(%d+)|(%d+)%s*$")
+        local t = tonumber(when)
+        Hop.tries = tonumber(tries) or 0
+        if t then
+            local age = os.time() - t
+            if age >= 0 and age < CFG.HopCool then
+                Hop.cool = os.clock() + (CFG.HopCool - age)
+            end
+        end
+    end
+end
+
+local function hopStamp(tries)
+    if type(writefile) ~= "function" then return end
+    pcall(writefile, HOP_FILE, ("%d|%d"):format(os.time(), tries or Hop.tries or 0))
+end
+
+function Hop.list()
+    if type(game.HttpGet) ~= "function" then return nil end
+    local url = ("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Desc&limit=100")
+        :format(game.PlaceId)
+    local ok, body = pcall(function() return game:HttpGet(url) end)
+    if not ok or type(body) ~= "string" or #body < 40 then return nil end
+    local ok2, data = pcall(function()
+        return game:GetService("HttpService"):JSONDecode(body)
+    end)
+    if not ok2 or type(data) ~= "table" or type(data.data) ~= "table" then return nil end
+    local best, bestN = nil, -1
+    for _, s in ipairs(data.data) do
+        local n = tonumber(s.playing) or 0
+        local mx = tonumber(s.maxPlayers) or 0
+        if type(s.id) == "string" and (mx == 0 or n < mx) and n > bestN then
+            best, bestN = s.id, n
+        end
+    end
+    return best, bestN
+end
+
+function Hop.go()
+    local job, n = Hop.list()
+    if job then
+        local ok = rawCall(Teleport, "TeleportToPlaceInstance", game.PlaceId, job, LP)
+        if ok then
+            Hop.hops = Hop.hops + 1
+            log(("hop: -> server with %d players"):format(n))
+            return true
+        end
+    end
+    local ok = rawCall(Teleport, "Teleport", game.PlaceId, LP)
+    if ok then
+        Hop.hops = Hop.hops + 1
+        log("hop: server list unavailable, rejoined blind")
+        return true
+    end
+    log("hop: teleport refused")
+    return false
+end
+
+function Hop.step()
+    Hop.online = #Players:GetPlayers()
+    if not Hop.on then Hop.state = "off" return end
+    if game.PlaceId ~= Plaza.HOME then Hop.state = "not in the lobby" return end
+    if os.clock() - Hop.t0 < CFG.HopGrace then Hop.state = "letting it fill" return end
+    if Hop.online >= Hop.below then
+        Hop.state = "fine"
+        if (Hop.tries or 0) > 0 then
+            Hop.tries = 0
+            hopStamp(0)
+        end
+        return
+    end
+    local st = Anniv.state or ""
+    if st ~= "closed" and st ~= "no portals" then
+        Hop.state = "event running"
+        return
+    end
+    if os.clock() < Hop.cool then
+        Hop.state = ("hop in %ds"):format(math.ceil(Hop.cool - os.clock()))
+        return
+    end
+    -- a long run of dead servers means the game is quiet, not that the hop is
+    -- broken: stop trying for a while instead of bouncing every 30 seconds
+    if (Hop.tries or 0) >= CFG.HopMax then
+        Hop.tries = 0
+        Hop.cool = os.clock() + CFG.HopRest
+        Hop.state = ("resting %dm"):format(math.floor(CFG.HopRest / 60))
+        hopStamp(0)
+        log(("hop: %d dead servers in a row, resting %d min"):format(CFG.HopMax, math.floor(CFG.HopRest / 60)))
+        return
+    end
+    Hop.state = "hopping"
+    Hop.cool = os.clock() + CFG.HopCool
+    Hop.last = os.clock()
+    Hop.tries = (Hop.tries or 0) + 1
+    hopStamp()
+    Hop.go()
+end
+
+function Hop.start()
+    if Hop._thread then return end
+    Hop._thread = task.spawn(function()
+        while Hub.alive do
+            if Hop.on then pcall(Hop.step) end
+            task.wait(CFG.HopGap)
+        end
+        Hop._thread = nil
+    end)
+end
+
+--=============================================================
 -- WIRING
 --=============================================================
 local function setMin(n)
@@ -1495,6 +1659,17 @@ end
 
 minusBtn.MouseButton1Click:Connect(function() setMin(Anniv.min - 1) end)
 plusBtn.MouseButton1Click:Connect(function() setMin(Anniv.min + 1) end)
+
+local function setHopBelow(n)
+    n = math.clamp(math.floor(tonumber(n) or 20), 2, 40)
+    Hop.below = n
+    CFG.HopBelow = n
+    hopChip.Text = tostring(n)
+    log("hop: min online " .. n)
+end
+
+hopMinus.MouseButton1Click:Connect(function() setHopBelow(Hop.below - 1) end)
+hopPlus.MouseButton1Click:Connect(function() setHopBelow(Hop.below + 1) end)
 
 joinNow.MouseButton1Click:Connect(function()
     if not Anniv.on then joinSw.set(true) end
@@ -1687,12 +1862,29 @@ local function refresh()
     bootLbl.Text = "boot: " .. bootState
     bootLbl.TextColor3 = bootCol
 
+    local hopState, hopCol = "off", C.dim
+    if Hop.on then
+        hopState = Hop.state or "idle"
+        hopCol = C.dim
+        if hopState == "hopping" then
+            hopCol = C.gold
+        elseif hopState == "fine" then
+            hopCol = C.good
+        elseif hopState == "event running" then
+            hopCol = C.accent
+        end
+    end
+    hopLbl.Text = ("online %d  ·  hop below %d  ·  %s"):format(
+        Hop.online or 0, Hop.below, hopState)
+    hopLbl.TextColor3 = hopCol
+
 end
 
 Anniv.start()
 AutoExit.start()
 Move.start()
 Plaza.start()
+Hop.start()
 Extra.load()
 
 local tick = task.spawn(function()
@@ -1735,6 +1927,9 @@ api.Build     = CFG.Build
 api.URL       = CFG.ReloadURL
 api.Extra     = Extra
 api.LoadExtra = function() Extra.load() end
+api.Hop       = Hop
+api.SetHopBelow = setHopBelow
+api.HopNow    = function() return Hop.go() end
 
 function api.destroy()
     Hub.alive = false

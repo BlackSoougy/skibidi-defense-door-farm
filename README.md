@@ -150,6 +150,12 @@ moment, so the hub waits for the counts to replicate before deciding.
 - **Survives its own teleports** — the script queues itself for the next
   teleport and reloads from the workspace copy or, failing that, from this file's
   raw URL. A plain loadstring is enough; nothing has to be saved locally.
+- **Server hop** — when the lobby holds fewer than `min online` players (default
+  **20**) and the event is closed, it asks the public server list for the fullest
+  joinable server and moves there. It never hops while the event is running: an
+  open portal at 6/10 is worth more than a gamble on another server. Cool-down
+  and the run counter live in `STD_Mini_hop.txt`, so a chain of small servers
+  cannot turn into a hop every 30 seconds; after 8 in a row it rests 5 minutes.
 - **Companion scripts** — `CFG.ExtraScripts` is a list of URLs loaded alongside
   the hub, once per place, each in its own thread with its own `pcall`, so a
   companion that loops or throws cannot take the hub down. It currently carries
@@ -163,6 +169,7 @@ local hub = getgenv().STD_Mini
 hub.Show(false)         hub.Toggle()
 hub.SetMin(7)           hub.JoinNow()      hub.ExitNow()
 hub.SetBoot(true)       hub.Boot.took      hub.Build
+hub.SetHopBelow(20)     hub.HopNow()       hub.Hop.state
 hub.LoadExtra()         hub.Extra.done
 hub.Log()
 ```
