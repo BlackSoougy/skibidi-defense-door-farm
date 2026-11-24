@@ -3,6 +3,9 @@
 One file. A door farm and an auction-house lister in a single window, for
 `[UTTV REWORK] Skibidi Defense`.
 
+Also in this repo: **[STD_Mini.luau](#std_mini)** — a separate mini hub for the
+JJK-style tower defence (`STD`), not part of the door farm.
+
 ## Load
 
 ```lua
@@ -90,4 +93,63 @@ hub.Auction.List()
 hub.Auction.Fill()
 hub.Auction.CancelAll()
 hub.Destroy()
+```
+
+---
+
+<a name="std_mini"></a>
+# STD_Mini — event joiner / auto exit / anti-AFK
+
+A different game, a different file. Three modules and a 480×600 window:
+auto-join the piñata portals, leave the match when it ends, and stay awake.
+
+## Load
+
+```lua
+loadstring(game:HttpGet("https://raw.githubusercontent.com/BlackSoougy/skibidi-defense-door-farm/main/STD_Mini.luau"))()
+```
+
+Safe to put in **autoexec**: it waits for `game:IsLoaded()`, `LocalPlayer`,
+`PlayerGui`, `ReplicatedStorage.Configs.Towers` and the character before it
+touches anything, and the switch `INJECT // BOOT` in the panel turns that wait
+off (stored in `STD_Mini_settings.txt`).
+
+## Which portal it joins
+
+A candidate is a portal that is open, has at least one player inside, and is not
+full. Then:
+
+| # | key |
+| --- | --- |
+| 1 | somebody inside holds **Meguna** (`KingOfCursesEvo`) or **Gojo Awakened** (`StrongestSorcererEvo`) |
+| 2 | the strongest deck — sum of the best 6 owned units by base damage |
+| 3 | `min players` met (a tiebreaker, not a gate) |
+| 4 | headcount, then portal index |
+
+Player slots are read through `Remotes.GetOtherPlayerData` (the trade menu's own
+call), cached per user for 20s. A portal that just opened reads `0/10` for a
+moment, so the hub waits for the counts to replicate before deciding.
+
+## Also in it
+
+- **Auto exit** — end screen up, or `Info.GameRunning == false` →
+  `Events.ExitGame:FireServer()`, with the game's own Exit button as a fallback.
+  Both remotes only exist inside a match place, so they are looked up per place.
+- **Anti-AFK** — four camera-relative directions held and blended, the root
+  carried along the same vector, on `Stepped` (a background client stops
+  rendering, so `RenderStepped` never fires). Stands still while the mouse is in
+  use. If the server drops you in the AFK plaza anyway, it teleports back to the
+  exact server it came from.
+- **Survives its own teleports** — the script queues itself for the next
+  teleport and reloads from the workspace copy or, failing that, from this file's
+  raw URL. A plain loadstring is enough; nothing has to be saved locally.
+
+## API
+
+```lua
+local hub = getgenv().STD_Mini
+hub.Show(false)         hub.Toggle()
+hub.SetMin(7)           hub.JoinNow()      hub.ExitNow()
+hub.SetBoot(true)       hub.Boot.took      hub.Build
+hub.Log()
 ```
