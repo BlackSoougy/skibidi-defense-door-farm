@@ -1,0 +1,93 @@
+# Skibidi Defense — Door Farm + Auction Hub
+
+One file. A door farm and an auction-house lister in a single window, for
+`[UTTV REWORK] Skibidi Defense`.
+
+## Load
+
+```lua
+loadstring(game:HttpGet("https://raw.githubusercontent.com/BlackSoougy/skibidi-defense-door-farm/main/SD_Hub.luau"))()
+```
+
+## Hotkeys
+
+| Key | Does |
+| --- | --- |
+| `F5` | show / hide the window |
+| `F3` | show it on the door-farm tab |
+
+Both tabs live in one `ScreenGui`, so nothing is duplicated and the old
+standalone copies are shut down automatically if they are still loaded.
+
+## Door farm
+
+It does not forge a remote. It drives the door's own `ProximityPrompt` — the
+same call your mouse makes when you walk up and press `E` — and it reads the
+server's own signals instead of guessing:
+
+| time | signal | meaning |
+| --- | --- | --- |
+| 0.25s | prompt fired | — |
+| 0.5s | `PromptVisuals "anchortrue"` | the knock was accepted |
+| 2.7s | viewport | the room pops up |
+| 5.5s | toast `Treat!` / `Trick!` | the payout, and the exact cooldown |
+| 8.4s | `PromptVisuals "anchorfalse"` | the sequence is over |
+
+- **One knock in flight.** Firing a second door mid-sequence is silently
+  dropped by the server, so a dropped knock is re-fired instead of the walk
+  being slowed down for everything.
+- **Cooldowns are parsed, not assumed.** The toast carries the remaining time
+  (`"The door will be available in 27 Minutes 32 Seconds"`) and it is stored
+  against that door.
+- **Per-door table.** Every door shows its last result (`treat` / `trick` /
+  `cooldown` / `fired`) and how long it still has to cool.
+- **Consumables only fire when the bag has one.** Counts come from the
+  `UpdateInventory` payload, never from the inventory GUI, which is a stale
+  snapshot. `Pumpkinspice` wipes every cooldown, `UpgradedBasket` doubles the
+  next 15 doors and stacks.
+
+Speed is `instant` / `150` / `400` / `800` studs per second, and the fire gap
+cycles `2.5s → 2.0s → 1.8s → 1.5s → 1.2s`. At 1.8s a full 29-door sweep takes
+about four minutes; the run is bound by the server sequence, not by travel.
+
+## Auction house
+
+- Real thumbnails, scraped from the game's own inventory grid, so `ITEM/*`
+  stacks have icons too.
+- The same buckets the trading menu uses: `Units`, `Shards`, `Items`, `Traits`,
+  `Crafted`, plus `All` with section headers and a name search.
+- Start bid, duration (`5m` / `1h` / `6h` / `12h` / `24h`), `LIST NOW`,
+  `FILL FREE SLOTS`, `cancel all`, and an auto mode that keeps the slots filled
+  and re-lists as lots expire.
+- `median` fills the price from the auction sniper's price table, if it is
+  loaded (`getgenv().SDAuctionSniper`).
+
+Measured against the server, not assumed:
+
+- `Max 1 items per listing.` — the quantity field was removed rather than left
+  lying.
+- `Slow down.` under about 8s between listings, so the cooldown is 9s with one
+  retry.
+- No listing fee.
+- The number of free slots is decided **before** the fill loop starts. Trusting
+  the cached count mid-loop over-lists (it placed 6 lots into 3 slots).
+
+## Notes
+
+- Nothing here writes to the account. Listing and cancelling are reversible and
+  free; the farm only uses items you actually own.
+- Reloading the script is safe: it tears down its predecessor and prunes stale
+  listeners left on the toast and prompt remotes.
+- Public API, if you want to drive it from another script:
+
+```lua
+local hub = getgenv().SDHub
+hub.Show("auction")
+hub.Farm.Start()  hub.Farm.Stop()  hub.Farm.Toggle()
+hub.Auction.SetItem("CursedSpeakerman")
+hub.Auction.SetPrice(500)
+hub.Auction.List()
+hub.Auction.Fill()
+hub.Auction.CancelAll()
+hub.Destroy()
+```
