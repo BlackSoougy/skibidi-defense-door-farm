@@ -60,21 +60,27 @@ end
 --=============================================================
 -- SHARED BITS
 --=============================================================
+-- cyberpunk glass: near-black base, cyan + magenta neon, mono type
 local C = {
-    bg     = Color3.fromRGB(16, 17, 21),
-    panel  = Color3.fromRGB(24, 26, 32),
-    card   = Color3.fromRGB(21, 23, 28),
-    row    = Color3.fromRGB(30, 33, 40),
-    rowAlt = Color3.fromRGB(26, 28, 34),
-    sel    = Color3.fromRGB(38, 58, 92),
-    accent = Color3.fromRGB(120, 170, 255),
-    good   = Color3.fromRGB(90, 220, 140),
-    bad    = Color3.fromRGB(240, 110, 110),
-    gold   = Color3.fromRGB(245, 200, 90),
-    text   = Color3.fromRGB(228, 232, 240),
-    dim    = Color3.fromRGB(140, 148, 162),
-    head   = Color3.fromRGB(180, 190, 205),
-    line   = Color3.fromRGB(48, 52, 62),
+    bg      = Color3.fromRGB(5, 8, 13),
+    glass   = Color3.fromRGB(11, 17, 25),
+    glass2  = Color3.fromRGB(17, 26, 37),
+    card    = Color3.fromRGB(14, 22, 31),
+    row     = Color3.fromRGB(17, 26, 36),
+    rowAlt  = Color3.fromRGB(13, 20, 29),
+    sel     = Color3.fromRGB(19, 56, 66),
+    accent  = Color3.fromRGB(64, 224, 240),
+    accent2 = Color3.fromRGB(188, 94, 246),
+    good    = Color3.fromRGB(94, 232, 158),
+    bad     = Color3.fromRGB(255, 92, 118),
+    gold    = Color3.fromRGB(246, 196, 84),
+    text    = Color3.fromRGB(226, 240, 248),
+    dim     = Color3.fromRGB(116, 142, 160),
+    head    = Color3.fromRGB(150, 200, 214),
+    line    = Color3.fromRGB(28, 58, 72),
+    mono    = Enum.Font.Code,
+    ui      = Enum.Font.Gotham,
+    uiB     = Enum.Font.GothamBold,
 }
 
 local CONNS = {}
@@ -1031,325 +1037,543 @@ gui.DisplayOrder = 9999
 gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 gui.Parent = parentGui()
 
-local WIN_W, WIN_H = 900, 620
+local WIN_W, WIN_H = 940, 660
 
-local frame = Instance.new("Frame")
-frame.Name = "Main"
-frame.Size = UDim2.fromOffset(WIN_W, WIN_H)
-frame.Position = UDim2.new(0.5, -WIN_W / 2, 0.5, -WIN_H / 2)
-frame.BackgroundColor3 = C.bg
-frame.BorderSizePixel = 0
-frame.Active = true
-frame.Draggable = true
-frame.Parent = gui
-Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
-local stroke = Instance.new("UIStroke", frame)
-stroke.Color = C.line
-stroke.Thickness = 1
-stroke.Parent = frame
-
-local function mkBtn(text, w, h, x, y, parent, size)
-    local b = Instance.new("TextButton")
-    b.Size = UDim2.fromOffset(w, h)
-    b.Position = UDim2.fromOffset(x, y)
-    b.BackgroundColor3 = C.panel
-    b.BorderSizePixel = 0
-    b.Font = Enum.Font.GothamSemibold
-    b.TextSize = size or 11
-    b.TextColor3 = C.text
-    b.Text = text
-    b.AutoButtonColor = false
-    b.Parent = parent or frame
-    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 5)
-    return b
+--// ---------- primitives ----------
+local function corner(inst, r)
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, r or 6)
+    c.Parent = inst
+    return c
 end
 
-local function mkLabel(text, x, y, w, h, parent, size, color, bold)
+local function stroke(inst, color, alpha, thickness)
+    local s = Instance.new("UIStroke")
+    s.Color = color
+    s.Transparency = alpha or 0.45
+    s.Thickness = thickness or 1
+    s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    s.Parent = inst
+    return s
+end
+
+-- eight short lines, two per corner: the bracket look from the reference
+local function brackets(parent, color, len, thick)
+    len, thick = len or 12, thick or 1
+    for _, p in ipairs({ { 0, 0 }, { 1, 0 }, { 0, 1 }, { 1, 1 } }) do
+        local sx, sy = p[1], p[2]
+        local ox = (sx == 0) and 0 or -len
+        local oy = (sy == 0) and 0 or -thick
+        local h = Instance.new("Frame")
+        h.BackgroundColor3 = color
+        h.BackgroundTransparency = 0.1
+        h.BorderSizePixel = 0
+        h.Size = UDim2.fromOffset(len, thick)
+        h.Position = UDim2.new(sx, ox, sy, oy)
+        h.Parent = parent
+
+        local v = Instance.new("Frame")
+        v.BackgroundColor3 = color
+        v.BackgroundTransparency = 0.1
+        v.BorderSizePixel = 0
+        v.Size = UDim2.fromOffset(thick, len)
+        v.Position = UDim2.new(sx, (sx == 0) and 0 or -thick, sy, (sy == 0) and 0 or -len)
+        v.Parent = parent
+    end
+end
+
+-- one scale rule for the whole UI: small type grows most, mid type a little,
+-- big type stays in proportion. keeps every label in the same rhythm
+local function bump(n)
+    if n <= 8 then return n + 2 end
+    if n <= 12 then return n + 1 end
+    return n + 2
+end
+
+-- a translucent panel with a vertical glass gradient, a hairline edge and
+-- corner brackets. this is the whole look: nothing here is opaque
+local function glass(x, y, w, h, parent, opt)
+    opt = opt or {}
+    local f = Instance.new("Frame")
+    f.Name = opt.name or "Glass"
+    f.Size = UDim2.fromOffset(w, h)
+    f.Position = UDim2.fromOffset(x, y)
+    f.BackgroundColor3 = Color3.new(1, 1, 1)
+    f.BackgroundTransparency = opt.t or 0.36
+    f.BorderSizePixel = 0
+    f.Parent = parent
+    corner(f, opt.r or 12)
+
+    local g = Instance.new("UIGradient")
+    g.Color = ColorSequence.new(Color3.fromRGB(26, 44, 58), Color3.fromRGB(6, 10, 16))
+    g.Rotation = 90
+    g.Parent = f
+
+    local edge = opt.stroke or C.accent
+    stroke(f, edge, opt.sa or 0.72, 1)
+    if opt.brackets ~= false then brackets(f, edge, 11, 1) end
+    return f
+end
+
+local function mono(text, x, y, w, h, parent, size, color, font)
     local l = Instance.new("TextLabel")
     l.Size = UDim2.fromOffset(w, h)
     l.Position = UDim2.fromOffset(x, y)
     l.BackgroundTransparency = 1
-    l.Font = bold and Enum.Font.GothamSemibold or Enum.Font.Gotham
-    l.TextSize = size or 11
+    l.Font = font or C.uiB
+    l.TextSize = bump(size or 10)
     l.TextColor3 = color or C.dim
     l.TextXAlignment = Enum.TextXAlignment.Left
     l.TextYAlignment = Enum.TextYAlignment.Top
-    l.TextWrapped = true
     l.Text = text
     l.Parent = parent
     return l
 end
 
-local function mkCard(x, y, w, h, parent)
-    local f = Instance.new("Frame")
-    f.Size = UDim2.fromOffset(w, h)
-    f.Position = UDim2.fromOffset(x, y)
-    f.BackgroundColor3 = C.panel
-    f.BorderSizePixel = 0
-    f.Parent = parent
-    Instance.new("UICorner", f).CornerRadius = UDim.new(0, 6)
-    return f
+local function chip(parent, text, color, x, y, w, h, size)
+    local l = Instance.new("TextLabel")
+    l.Size = UDim2.fromOffset(w, h)
+    l.Position = UDim2.fromOffset(x, y)
+    l.BackgroundColor3 = color
+    l.BackgroundTransparency = 0.84
+    l.BorderSizePixel = 0
+    l.Font = C.uiB
+    l.TextSize = bump(size or 9)
+    l.TextColor3 = color:Lerp(Color3.new(1, 1, 1), 0.55)
+    l.Text = text
+    l.TextXAlignment = Enum.TextXAlignment.Center
+    l.Parent = parent
+    corner(l, 5)
+    stroke(l, color, 0.5, 1)
+    return l
 end
 
---// header
-local header = Instance.new("Frame")
-header.Size = UDim2.new(1, 0, 0, 46)
-header.BackgroundColor3 = C.panel
-header.BorderSizePixel = 0
-header.Parent = frame
-Instance.new("UICorner", header).CornerRadius = UDim.new(0, 8)
+-- A UIGradient tints the text of the control it sits on, not just the fill, so
+-- the gradient lives on a frame behind the button and the button itself is
+-- transparent. That keeps the label white while the plate stays neon.
+local function neon(text, x, y, w, h, parent, c1, c2, size, glow)
+    if glow then
+        local g = Instance.new("Frame")
+        g.Size = UDim2.fromOffset(w + 12, h + 12)
+        g.Position = UDim2.fromOffset(x - 6, y - 6)
+        g.BackgroundColor3 = c1
+        g.BackgroundTransparency = 0.88
+        g.BorderSizePixel = 0
+        g.Parent = parent
+        corner(g, 16)
+    end
 
-local title = mkLabel("SD HUB", 14, 0, 110, 46, header, 15, C.text, true)
-title.TextYAlignment = Enum.TextYAlignment.Center
-title.TextWrapped = false
+    local bg = Instance.new("Frame")
+    bg.Size = UDim2.fromOffset(w, h)
+    bg.Position = UDim2.fromOffset(x, y)
+    bg.BackgroundColor3 = Color3.new(1, 1, 1)
+    bg.BorderSizePixel = 0
+    bg.Parent = parent
+    corner(bg, 8)
+    local gr = Instance.new("UIGradient")
+    gr.Color = ColorSequence.new(c1, c2 or c1)
+    gr.Rotation = 90
+    gr.Parent = bg
+    stroke(bg, c1:Lerp(Color3.new(1, 1, 1), 0.4), 0.32, 1)
+
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.fromOffset(w, h)
+    b.Position = UDim2.fromOffset(x, y)
+    b.BackgroundTransparency = 1
+    b.BorderSizePixel = 0
+    b.Font = C.uiB
+    b.TextSize = bump(size or 11)
+    b.TextColor3 = Color3.fromRGB(242, 253, 255)
+    b.Text = text
+    b.AutoButtonColor = false
+    b.Parent = parent
+    return b, bg
+end
+
+-- flat chip button, used for tabs, durations and settings
+local function tagBtn(text, x, y, w, h, parent, size)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.fromOffset(w, h)
+    b.Position = UDim2.fromOffset(x, y)
+    b.BackgroundColor3 = C.glass2
+    b.BackgroundTransparency = 0.62
+    b.BorderSizePixel = 0
+    b.Font = C.uiB
+    b.TextSize = bump(size or 10)
+    b.TextColor3 = C.dim
+    b.Text = text
+    b.AutoButtonColor = false
+    b.Parent = parent
+    corner(b, 7)
+    stroke(b, C.line, 0.35, 1)
+    return b
+end
+
+local function esc(s)
+    return (tostring(s):gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "&gt;"))
+end
+
+--// ---------- window ----------
+local frame = Instance.new("Frame")
+frame.Name = "Main"
+frame.Size = UDim2.fromOffset(WIN_W, WIN_H)
+frame.Position = UDim2.new(0.5, -WIN_W / 2, 0.5, -WIN_H / 2)
+frame.BackgroundColor3 = C.bg
+frame.BackgroundTransparency = 0.05
+frame.BorderSizePixel = 0
+frame.Active = true
+frame.Draggable = true
+frame.Parent = gui
+corner(frame, 14)
+stroke(frame, C.accent, 0.6, 1)
+brackets(frame, C.accent, 16, 1)
+
+local sheen = Instance.new("Frame")
+sheen.Size = UDim2.new(1, -30, 0, 1)
+sheen.Position = UDim2.fromOffset(15, 0)
+sheen.BackgroundColor3 = Color3.fromRGB(130, 240, 255)
+sheen.BorderSizePixel = 0
+sheen.Parent = frame
+local sg = Instance.new("UIGradient")
+sg.Color = ColorSequence.new(Color3.fromRGB(130, 240, 255), Color3.fromRGB(130, 240, 255))
+sg.Transparency = NumberSequence.new({
+    NumberSequenceKeypoint.new(0, 0.35),
+    NumberSequenceKeypoint.new(0.55, 0.92),
+    NumberSequenceKeypoint.new(1, 1),
+})
+sg.Parent = sheen
+
+--// ---------- header ----------
+local header = Instance.new("Frame")
+header.Size = UDim2.new(1, 0, 0, 58)
+header.BackgroundTransparency = 1
+header.Parent = frame
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.fromOffset(200, 26)
+title.Position = UDim2.fromOffset(20, 10)
+title.BackgroundTransparency = 1
+title.Font = Enum.Font.GothamBlack
+title.TextSize = 22
+title.TextColor3 = Color3.fromRGB(240, 252, 255)
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Text = "SD_HUB"
+title.Parent = header
+local tg = Instance.new("UIGradient")
+tg.Color = ColorSequence.new(Color3.fromRGB(126, 248, 255), Color3.fromRGB(188, 96, 246))
+tg.Parent = title
+
+local subtitle = mono("// SKIBIDI DEFENSE  ·  DOOR_FARM + AUCTION", 20, 34, 320, 12, header, 8, C.dim)
 
 local VIEWS = { farm = "DOOR FARM", auction = "AUCTION" }
-local tabBtns = {}
-local tabX = 130
+local tabBtns, tabBars = {}, {}
+local tabX = 246
 for _, key in ipairs({ "farm", "auction" }) do
-    local b = mkBtn(VIEWS[key], 120, 26, tabX, 10, header, 11)
+    local w = 128
+    local b = tagBtn("[ " .. VIEWS[key] .. " ]", tabX, 14, w, 30, header, 11)
     tabBtns[key] = b
-    tabX = tabX + 126
+    local bar = Instance.new("Frame")
+    bar.Size = UDim2.new(1, -16, 0, 2)
+    bar.Position = UDim2.new(0, 8, 1, -4)
+    bar.BackgroundColor3 = C.accent
+    bar.BorderSizePixel = 0
+    bar.Visible = false
+    bar.Parent = b
+    tabBars[key] = bar
+    tabX = tabX + w + 8
 end
 
-local hubPill = mkLabel("", 392, 0, WIN_W - 440, 46, header, 10, C.dim)
+local hubPill = mono("farm: idle", 530, 0, WIN_W - 600, 58, header, 10, C.dim)
 hubPill.TextXAlignment = Enum.TextXAlignment.Right
 hubPill.TextYAlignment = Enum.TextYAlignment.Center
 hubPill.TextWrapped = false
-hubPill.Text = "farm: idle"
 
-local closeBtn = mkBtn("x", 24, 24, WIN_W - 34, 11, header, 12)
+local closeBtn = tagBtn("×", WIN_W - 46, 14, 30, 30, header, 16)
+closeBtn.TextColor3 = C.dim
+
+local divider = Instance.new("Frame")
+divider.Size = UDim2.new(1, -32, 0, 1)
+divider.Position = UDim2.fromOffset(16, 56)
+divider.BackgroundColor3 = C.accent
+divider.BorderSizePixel = 0
+divider.Parent = frame
+local dg = Instance.new("UIGradient")
+dg.Color = ColorSequence.new(C.accent, C.accent2)
+dg.Transparency = NumberSequence.new({
+    NumberSequenceKeypoint.new(0, 0.15),
+    NumberSequenceKeypoint.new(0.6, 0.85),
+    NumberSequenceKeypoint.new(1, 1),
+})
+dg.Parent = divider
 
 local content = Instance.new("Frame")
-content.Size = UDim2.new(1, 0, 1, -46)
-content.Position = UDim2.fromOffset(0, 46)
+content.Size = UDim2.new(1, 0, 1, -58)
+content.Position = UDim2.fromOffset(0, 58)
 content.BackgroundTransparency = 1
-content.BorderSizePixel = 0
 content.Parent = frame
 
-local farmView    = Instance.new("Frame")
-farmView.Name     = "FarmView"
-farmView.Size     = UDim2.new(1, 0, 1, 0)
+local farmView = Instance.new("Frame")
+farmView.Name = "FarmView"
+farmView.Size = UDim2.new(1, 0, 1, 0)
 farmView.BackgroundTransparency = 1
-farmView.BorderSizePixel = 0
-farmView.Parent   = content
+farmView.Parent = content
 
 local auctionView = Instance.new("Frame")
-auctionView.Name  = "AuctionView"
-auctionView.Size  = UDim2.new(1, 0, 1, 0)
+auctionView.Name = "AuctionView"
+auctionView.Size = UDim2.new(1, 0, 1, 0)
 auctionView.BackgroundTransparency = 1
-auctionView.BorderSizePixel = 0
 auctionView.Visible = false
 auctionView.Parent = content
 
 --=============================================================
 -- FARM VIEW
 --=============================================================
-local leftCard  = mkCard(12, 8, 300, 556, farmView)
-local rightCard = mkCard(324, 8, 564, 556, farmView)
+local startBtn, startBg = neon("START", 14, 6, 352, 44, farmView, Color3.fromRGB(28, 168, 122),
+    Color3.fromRGB(22, 118, 158), 13, true)
 
-local startBtn = mkBtn("START", 276, 42, 12, 12, leftCard, 13)
-startBtn.BackgroundColor3 = Color3.fromRGB(46, 160, 96)
-startBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+local statsCard = glass(14, 58, 352, 108, farmView, { name = "Stats" })
+local statsLbl = Instance.new("TextLabel")
+statsLbl.Size = UDim2.fromOffset(330, 94)
+statsLbl.Position = UDim2.fromOffset(12, 8)
+statsLbl.BackgroundTransparency = 1
+statsLbl.Font = C.mono
+statsLbl.TextSize = 12
+statsLbl.TextColor3 = C.text
+statsLbl.TextXAlignment = Enum.TextXAlignment.Left
+statsLbl.TextYAlignment = Enum.TextYAlignment.Top
+statsLbl.RichText = true
+statsLbl.Text = ""
+statsLbl.Parent = statsCard
 
-local fStatus = mkLabel("status: idle", 12, 64, 276, 16, leftCard, 11, C.dim)
-local fDoor   = mkLabel("door: -", 12, 84, 276, 16, leftCard, 11, C.dim)
-local fDoors  = mkLabel("doors: 0  cooling: 0", 12, 104, 276, 16, leftCard, 11, C.dim)
-local fCount  = mkLabel("treats 0  tricks 0", 12, 124, 276, 32, leftCard, 10, C.dim)
+-- consumables: two little readouts, same shape as the reference's stat rows
+local function readout(x, title)
+    local p = glass(x, 172, 170, 54, farmView, { name = title, brackets = false })
+    mono(title, 10, 7, 150, 10, p, 8, C.head)
+    local v = mono("0", 10, 20, 150, 26, p, 20, C.gold)
+    return v
+end
+local pumpkinVal = readout(14, "PUMPKINSPICE")
+local basketVal = readout(196, "BASKET")
 
-local fItemsHead = mkLabel("CONSUMABLES", 12, 160, 276, 14, leftCard, 9, C.head, true)
-local fItems     = mkLabel("pumpkinspice 0  basket 0", 12, 176, 276, 32, leftCard, 10, C.gold)
-
-local speedBtn  = mkBtn("speed: instant", 132, 28, 12, 216, leftCard, 11)
-local gapBtn    = mkBtn("gap: 1.8s", 132, 28, 156, 216, leftCard, 11)
-local pumpkinBtn = mkBtn("use pumpkinspice", 132, 28, 12, 250, leftCard, 11)
-local basketBtn  = mkBtn("use basket", 132, 28, 156, 250, leftCard, 11)
-pumpkinBtn.BackgroundColor3 = Color3.fromRGB(58, 44, 24)
+local speedBtn = tagBtn("speed: instant", 14, 232, 170, 30, farmView, 10)
+local gapBtn   = tagBtn("gap: 1.8s", 196, 232, 170, 30, farmView, 10)
+local pumpkinBtn = tagBtn("use pumpkinspice", 14, 268, 170, 30, farmView, 10)
+local basketBtn  = tagBtn("use basket", 196, 268, 170, 30, farmView, 10)
 pumpkinBtn.TextColor3 = Color3.fromRGB(240, 200, 150)
-basketBtn.BackgroundColor3 = Color3.fromRGB(58, 44, 24)
 basketBtn.TextColor3 = Color3.fromRGB(240, 200, 150)
+local resetBtn = tagBtn("reset cooldowns", 14, 304, 352, 28, farmView, 10)
 
-local resetBtn = mkBtn("reset cooldowns", 276, 26, 12, 286, leftCard, 11)
+--// terminal
+local term = glass(14, 338, 352, 256, farmView, { name = "Terminal", t = 0.3 })
+mono("TERMINAL", 12, 8, 120, 12, term, 9, C.head)
+mono("/ DOOR_SYS", 84, 8, 120, 12, term, 9, C.accent)
+local termRule = Instance.new("Frame")
+termRule.Size = UDim2.new(1, -24, 0, 1)
+termRule.Position = UDim2.fromOffset(12, 24)
+termRule.BackgroundColor3 = C.line
+termRule.BorderSizePixel = 0
+termRule.Parent = term
 
-local fLogHead = mkLabel("LOG", 12, 320, 276, 14, leftCard, 9, C.head, true)
-local fLog = mkLabel("", 12, 336, 276, 148, leftCard, 9, C.dim)
-fLog.Text = "idle"
+local termLbl = Instance.new("TextLabel")
+termLbl.Size = UDim2.fromOffset(330, 180)
+termLbl.Position = UDim2.fromOffset(12, 30)
+termLbl.BackgroundTransparency = 1
+termLbl.Font = C.mono
+termLbl.TextSize = 10
+termLbl.TextColor3 = C.text
+termLbl.TextXAlignment = Enum.TextXAlignment.Left
+termLbl.TextYAlignment = Enum.TextYAlignment.Top
+termLbl.RichText = true
+termLbl.TextWrapped = true
+termLbl.Text = ""
+termLbl.Parent = term
 
-local fHint = mkLabel("F5 toggles the window. Items fire only when the inventory actually holds one.",
-    12, 492, 276, 52, leftCard, 9, Color3.fromRGB(110, 118, 132))
+local promptLbl = mono("root@sd_hub:~$", 12, 222, 330, 16, term, 10, C.accent, C.mono)
+local promptCur = Instance.new("Frame")
+promptCur.Size = UDim2.fromOffset(7, 13)
+promptCur.Position = UDim2.fromOffset(112, 224)
+promptCur.BackgroundColor3 = C.accent
+promptCur.BorderSizePixel = 0
+promptCur.Parent = term
 
---// doors table
-local doorsHead = mkLabel("DOORS", 12, 10, 200, 14, rightCard, 10, C.head, true)
-local doorsSum  = mkLabel("", 200, 10, 352, 14, rightCard, 9, C.dim)
+--// doors grid
+local doorsTitle = mono("DOORS", 380, 6, 120, 14, farmView, 10, C.head)
+local doorsSum = mono("", 500, 6, 426, 14, farmView, 9, C.dim)
 doorsSum.TextXAlignment = Enum.TextXAlignment.Right
-doorsSum.TextWrapped = false
 
-local colName = mkLabel("door", 14, 30, 110, 14, rightCard, 9, C.dim, true)
-local colRes  = mkLabel("result", 130, 30, 120, 14, rightCard, 9, C.dim, true)
-local colCd   = mkLabel("cooldown", 254, 30, 300, 14, rightCard, 9, C.dim, true)
-colCd.TextXAlignment = Enum.TextXAlignment.Right
+local grid = Instance.new("ScrollingFrame")
+grid.Size = UDim2.fromOffset(546, 498)
+grid.Position = UDim2.fromOffset(380, 28)
+grid.BackgroundTransparency = 1
+grid.BorderSizePixel = 0
+grid.ScrollBarThickness = 3
+grid.ScrollBarImageColor3 = C.accent
+grid.CanvasSize = UDim2.new()
+grid.AutomaticCanvasSize = Enum.AutomaticSize.Y
+grid.Parent = farmView
 
-local doorsScroll = Instance.new("ScrollingFrame")
-doorsScroll.Size = UDim2.fromOffset(544, 434)
-doorsScroll.Position = UDim2.fromOffset(10, 46)
-doorsScroll.BackgroundColor3 = C.card
-doorsScroll.BorderSizePixel = 0
-doorsScroll.ScrollBarThickness = 4
-doorsScroll.ScrollBarImageColor3 = C.accent
-doorsScroll.CanvasSize = UDim2.new()
-doorsScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-doorsScroll.Parent = rightCard
-Instance.new("UICorner", doorsScroll).CornerRadius = UDim.new(0, 5)
+local gridLayout = Instance.new("UIGridLayout")
+gridLayout.CellSize = UDim2.fromOffset(127, 80)
+gridLayout.CellPadding = UDim2.fromOffset(8, 8)
+gridLayout.SortOrder = Enum.SortOrder.LayoutOrder
+gridLayout.Parent = grid
 
-local doorsLayout = Instance.new("UIListLayout")
-doorsLayout.Padding = UDim.new(0, 2)
-doorsLayout.SortOrder = Enum.SortOrder.LayoutOrder
-doorsLayout.Parent = doorsScroll
+local rewardsCard = glass(380, 534, 546, 60, farmView, { name = "Rewards", brackets = false })
+mono("PAYOUT", 12, 7, 120, 10, rewardsCard, 8, C.head)
+local rewardsLbl = mono("-", 12, 20, 520, 32, rewardsCard, 10, C.good)
+rewardsLbl.TextWrapped = true
 
-local fRewards = mkLabel("rewards: -", 12, 488, 544, 56, rightCard, 10, C.good)
+local doorCards = {}
 
-local doorRows = {}   -- name -> { frame, res, cd }
+uiF.log = function()
+    local out = {}
+    for _, line in ipairs(FS.Log) do
+        local t, m = line:match("^(%d%d:%d%d:%d%d)%s+(.*)$")
+        if t then
+            out[#out + 1] = string.format('<font color="#3d7f8f">%s</font>  %s', t, esc(m))
+        else
+            out[#out + 1] = esc(line)
+        end
+    end
+    if #out == 0 then
+        out[1] = '<font color="#3d7f8f">// awaiting uplink</font>'
+    end
+    termLbl.Text = table.concat(out, "\n")
+end
 
 uiF.rebuild = function()
-    for _, r in pairs(doorRows) do
+    for _, r in pairs(doorCards) do
         if r.frame then r.frame:Destroy() end
     end
-    doorRows = {}
+    doorCards = {}
 
     if #FS.Doors == 0 then
-        local empty = Instance.new("TextLabel")
-        empty.Size = UDim2.new(1, -12, 0, 22)
-        empty.BackgroundTransparency = 1
-        empty.Font = Enum.Font.Gotham
-        empty.TextSize = 10
-        empty.TextColor3 = C.dim
-        empty.TextXAlignment = Enum.TextXAlignment.Left
-        empty.Text = "no doors found - this place has no event board"
-        empty.Parent = doorsScroll
-        doorRows.__empty = { frame = empty }
+        local empty = mono("no doors in this place", 4, 4, 300, 14, grid, 10, C.dim)
+        doorCards.__empty = { frame = empty }
         return
     end
 
     for i, d in ipairs(FS.Doors) do
-        local row = Instance.new("Frame")
-        row.Size = UDim2.new(1, -6, 0, 20)
-        row.BackgroundColor3 = (i % 2 == 0) and C.rowAlt or C.row
-        row.BorderSizePixel = 0
-        row.LayoutOrder = i
-        row.Parent = doorsScroll
-        Instance.new("UICorner", row).CornerRadius = UDim.new(0, 4)
+        local card = Instance.new("Frame")
+        card.Size = UDim2.fromOffset(127, 80)
+        card.BackgroundColor3 = C.card
+        card.BackgroundTransparency = 0.32
+        card.BorderSizePixel = 0
+        card.LayoutOrder = i
+        card.Parent = grid
+        corner(card, 5)
+        local cs = stroke(card, C.line, 0.35, 1)
 
-        local nm = Instance.new("TextLabel")
-        nm.Size = UDim2.fromOffset(110, 20)
-        nm.Position = UDim2.fromOffset(8, 0)
-        nm.BackgroundTransparency = 1
-        nm.Font = Enum.Font.GothamSemibold
-        nm.TextSize = 10
-        nm.TextColor3 = C.text
-        nm.TextXAlignment = Enum.TextXAlignment.Left
-        nm.Text = d.name
-        nm.Parent = row
+        local nm = mono(d.name:upper(), 8, 7, 64, 14, card, 10, C.text, C.mono)
+        local ch = chip(card, "READY", C.dim, 73, 6, 48, 16, 8)
+        local val = mono("-", 8, 28, 111, 30, card, 17, C.dim, C.mono)
+        local sub = mono("", 8, 58, 111, 12, card, 8, C.dim, C.mono)
 
-        local res = Instance.new("TextLabel")
-        res.Size = UDim2.fromOffset(120, 20)
-        res.Position = UDim2.fromOffset(124, 0)
-        res.BackgroundTransparency = 1
-        res.Font = Enum.Font.Gotham
-        res.TextSize = 10
-        res.TextColor3 = C.dim
-        res.TextXAlignment = Enum.TextXAlignment.Left
-        res.Text = "-"
-        res.Parent = row
+        local bar = Instance.new("Frame")
+        bar.Size = UDim2.new(1, -20, 0, 2)
+        bar.Position = UDim2.new(0, 10, 1, -8)
+        bar.BackgroundColor3 = C.line
+        bar.BorderSizePixel = 0
+        bar.Parent = card
 
-        local cd = Instance.new("TextLabel")
-        cd.Size = UDim2.new(1, -252, 0, 20)
-        cd.Position = UDim2.fromOffset(248, 0)
-        cd.BackgroundTransparency = 1
-        cd.Font = Enum.Font.Gotham
-        cd.TextSize = 10
-        cd.TextColor3 = C.dim
-        cd.TextXAlignment = Enum.TextXAlignment.Right
-        cd.Text = "ready"
-        cd.Parent = row
-
-        doorRows[d.name] = { frame = row, res = res, cd = cd }
+        doorCards[d.name] = { frame = card, chip = ch, val = val, sub = sub, bar = bar, stroke = cs }
     end
-end
-
-uiF.log = function()
-    fLog.Text = (#FS.Log > 0) and table.concat(FS.Log, "\n") or "idle"
 end
 
 uiF.refresh = function()
     local now = os.clock()
 
+    local sg2 = startBg:FindFirstChildOfClass("UIGradient")
     if FS.Running then
         startBtn.Text = "STOP"
-        startBtn.BackgroundColor3 = Color3.fromRGB(180, 60, 60)
+        if sg2 then
+            sg2.Color = ColorSequence.new(Color3.fromRGB(198, 52, 92), Color3.fromRGB(120, 40, 130))
+        end
     else
         startBtn.Text = "START"
-        startBtn.BackgroundColor3 = Color3.fromRGB(46, 160, 96)
+        if sg2 then
+            sg2.Color = ColorSequence.new(Color3.fromRGB(28, 168, 122), Color3.fromRGB(22, 118, 158))
+        end
     end
-
-    fStatus.Text = "status: " .. FS.Status
-    fDoor.Text = "door: " .. (FS.Current and FS.Current.name or "-")
 
     local cooling, ready = 0, 0
     for _, d in ipairs(FS.Doors) do
         if d.cdUntil > now then cooling = cooling + 1 else ready = ready + 1 end
     end
-    fDoors.Text = string.format("doors: %d   ready: %d   cooling: %d", #FS.Doors, ready, cooling)
-    fCount.Text = string.format("treats %d   tricks %d   cd %d   retry %d",
-        FS.Treats, FS.Tricks, FS.Cooldowns, FS.Retries)
 
-    fItems.Text = string.format("pumpkinspice %d   basket %d\nused: %d pumpkin / %d basket",
-        itemCount("Pumpkinspice"), itemCount("UpgradedBasket"),
-        FS.PumpkinUses or 0, FS.BasketUses or 0)
+    statsLbl.Text = string.format(
+        '<font color="#3d7f8f">SYS  </font> %s\n' ..
+        '<font color="#3d7f8f">DOOR </font> %s\n' ..
+        '<font color="#3d7f8f">QUEUE</font> %d ready / %d cooling\n' ..
+        '<font color="#3d7f8f">RUN  </font> lap %d  ·  treats %d  ·  tricks %d\n' ..
+        '<font color="#3d7f8f">MISC </font> cd %d  ·  retry %d',
+        FS.Running and '<font color="#5ee89e">RUNNING</font>' or '<font color="#748ea0">IDLE</font>',
+        esc(FS.Current and FS.Current.name or "-"),
+        ready, cooling,
+        FS.Laps or 1, FS.Treats, FS.Tricks,
+        FS.Cooldowns, FS.Retries)
+
+    pumpkinVal.Text = tostring(itemCount("Pumpkinspice"))
+    basketVal.Text = tostring(itemCount("UpgradedBasket"))
+
+    doorsSum.Text = string.format("%d total  ·  %d ready  ·  %d cooling", #FS.Doors, ready, cooling)
 
     local parts = {}
     for item, n in pairs(FS.Rewards) do
         parts[#parts + 1] = item .. " +" .. fmt(n)
     end
     table.sort(parts)
-    fRewards.Text = #parts > 0 and ("rewards: " .. table.concat(parts, ", ")) or "rewards: -"
+    rewardsLbl.Text = #parts > 0 and table.concat(parts, "   ·   ") or "-"
 
-    doorsSum.Text = string.format("%d doors   %d ready", #FS.Doors, ready)
+    -- blink, roughly twice a second at this tick rate
+    promptCur.Visible = (math.floor(os.clock() * 2) % 2 == 0)
 
-    -- the header pill keeps the farm visible while the auction tab is open
     if FS.Running then
-        hubPill.Text = string.format("farm: running   lap %d   %d/%d   %d treats",
+        hubPill.Text = string.format("farm: running  ·  lap %d  ·  %d/%d  ·  %d treats",
             FS.Laps or 1, FS.Cursor or 1, #FS.Doors, FS.Treats)
         hubPill.TextColor3 = C.good
     else
-        hubPill.Text = string.format("farm: idle   %d doors   %d treats", #FS.Doors, FS.Treats)
+        hubPill.Text = string.format("farm: idle  ·  %d doors  ·  %d treats", #FS.Doors, FS.Treats)
         hubPill.TextColor3 = C.dim
     end
 
     for _, d in ipairs(FS.Doors) do
-        local r = doorRows[d.name]
-        if r then
+        local c = doorCards[d.name]
+        if c then
+            local left = d.cdUntil - now
+            local col, label, value, sub
+
             if d.result == "treat" then
-                r.res.Text = "treat"
-                r.res.TextColor3 = C.good
+                col, label = C.good, "TREAT"
             elseif d.result == "trick" then
-                r.res.Text = "trick"
-                r.res.TextColor3 = C.bad
+                col, label = C.bad, "TRICK"
             elseif d.result == "cooldown" then
-                r.res.Text = "cooldown"
-                r.res.TextColor3 = C.gold
+                col, label = C.gold, "COOL"
+            elseif d.inFlight then
+                col, label = C.accent, "FIRE"
             else
-                r.res.Text = d.inFlight and "fired" or "-"
-                r.res.TextColor3 = C.dim
+                col, label = C.dim, "READY"
             end
 
-            local left = d.cdUntil - now
             if left > 0 then
-                r.cd.Text = "ready in " .. mmss(left)
-                r.cd.TextColor3 = C.gold
+                value = mmss(left)
+                sub = "cooldown"
+            elseif d.inFlight then
+                value = "···"
+                sub = "in flight"
             else
-                r.cd.Text = d.inFlight and "in flight" or "ready"
-                r.cd.TextColor3 = C.dim
+                value = "READY"
+                sub = "open"
             end
+
+            c.chip.Text = label
+            c.chip.TextColor3 = col:Lerp(Color3.new(1, 1, 1), 0.55)
+            c.chip.BackgroundColor3 = col
+            c.val.Text = value
+            c.val.TextColor3 = (left > 0) and col or (d.inFlight and C.accent or C.good)
+            c.sub.Text = string.format("%s  ·  tries %d", sub, d.tries or 0)
+            c.bar.BackgroundColor3 = col
+            c.bar.BackgroundTransparency = (left > 0 or d.inFlight) and 0.15 or 0.75
         end
     end
 end
@@ -1402,111 +1626,122 @@ startBtn.MouseButton1Click:Connect(function() Farm.Toggle() end)
 --=============================================================
 -- AUCTION VIEW
 --=============================================================
-local aStat = mkLabel("loading inventory...", 12, 8, 470, 18, auctionView, 11, C.dim)
-aStat.TextWrapped = false
+local invPanel = glass(14, 6, 600, 556, auctionView, { name = "Inventory" })
+local side     = glass(626, 6, 300, 556, auctionView, { name = "Side" })
 
-local reloadBtn = mkBtn("reload inventory", 118, 22, 496, 6, auctionView, 10)
-local autoBtn   = mkBtn("auto: off", 84, 22, 620, 6, auctionView, 10)
-local cancelBtn = mkBtn("cancel all", 90, 22, 710, 6, auctionView, 10)
-
-local invPanel = mkCard(12, 34, 592, 496, auctionView)
-local side     = mkCard(616, 34, 272, 496, auctionView)
-
---// tabs
+--// category chips
 local tabButtons = {}
 for i, name in ipairs(ACATS) do
-    local b = mkBtn(name, 92, 24, 6 + (i - 1) * 96, 6, invPanel, 10)
+    local b = tagBtn(name, 9 + (i - 1) * 98, 8, 92, 26, invPanel, 10)
     tabButtons[name] = b
 end
 
 local searchBox = Instance.new("TextBox")
 searchBox.Name = "Search"
-searchBox.Size = UDim2.fromOffset(580, 24)
-searchBox.Position = UDim2.fromOffset(6, 34)
-searchBox.BackgroundColor3 = C.bg
+searchBox.Size = UDim2.fromOffset(582, 28)
+searchBox.Position = UDim2.fromOffset(9, 40)
+searchBox.BackgroundColor3 = C.glass2
+searchBox.BackgroundTransparency = 0.55
 searchBox.BorderSizePixel = 0
-searchBox.Font = Enum.Font.Gotham
-searchBox.TextSize = 11
+searchBox.Font = C.mono
+searchBox.TextSize = 12
 searchBox.TextColor3 = C.text
-searchBox.PlaceholderText = "search by name..."
+searchBox.PlaceholderText = "> search_name"
 searchBox.PlaceholderColor3 = C.dim
 searchBox.ClearTextOnFocus = false
 searchBox.TextXAlignment = Enum.TextXAlignment.Left
 searchBox.Text = ""
 searchBox.Parent = invPanel
-Instance.new("UICorner", searchBox).CornerRadius = UDim.new(0, 5)
+corner(searchBox, 4)
+stroke(searchBox, C.line, 0.4, 1)
 
 local invScroll = Instance.new("ScrollingFrame")
 invScroll.Name = "ScrollingFrame"
-invScroll.Size = UDim2.fromOffset(580, 428)
-invScroll.Position = UDim2.fromOffset(6, 62)
-invScroll.BackgroundColor3 = C.bg
+invScroll.Size = UDim2.fromOffset(582, 468)
+invScroll.Position = UDim2.fromOffset(9, 76)
+invScroll.BackgroundTransparency = 1
 invScroll.BorderSizePixel = 0
-invScroll.ScrollBarThickness = 4
+invScroll.ScrollBarThickness = 3
 invScroll.ScrollBarImageColor3 = C.accent
 invScroll.CanvasSize = UDim2.new()
 invScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
 invScroll.Parent = invPanel
-Instance.new("UICorner", invScroll).CornerRadius = UDim.new(0, 5)
 
 local invLayout = Instance.new("UIListLayout")
 invLayout.Padding = UDim.new(0, 2)
 invLayout.SortOrder = Enum.SortOrder.LayoutOrder
 invLayout.Parent = invScroll
 
---// side
-local selLbl = mkLabel("nothing selected", 10, 8, 252, 34, side, 10, C.dim, true)
-mkLabel("START BID (P$)", 10, 44, 252, 14, side, 9, C.dim)
-mkLabel("DURATION", 10, 92, 252, 14, side, 9, C.dim)
-mkLabel("LISTING SLOTS", 10, 136, 252, 14, side, 9, C.dim)
+--// detail card
+local detail = glass(10, 8, 280, 108, side, { name = "Detail", brackets = false, t = 0.42 })
+local dIcon = Instance.new("ImageLabel")
+dIcon.Size = UDim2.fromOffset(52, 52)
+dIcon.Position = UDim2.fromOffset(14, 26)
+dIcon.BackgroundColor3 = C.bg
+dIcon.BackgroundTransparency = 0.4
+dIcon.BorderSizePixel = 0
+dIcon.ScaleType = Enum.ScaleType.Fit
+dIcon.Parent = detail
+corner(dIcon, 4)
+
+local dName = mono("nothing selected", 76, 20, 196, 16, detail, 11, C.text)
+local dChip = chip(detail, "-", C.dim, 76, 40, 70, 14, 8)
+local dQty = mono("", 76, 60, 196, 14, detail, 9, C.dim)
+mono("// click a row", 14, 86, 250, 12, detail, 8, C.dim)
+
+mono("START BID (P$)", 10, 124, 200, 12, side, 8, C.head)
 
 local priceBox = Instance.new("TextBox")
 priceBox.Name = "Price"
-priceBox.Size = UDim2.fromOffset(150, 24)
-priceBox.Position = UDim2.fromOffset(10, 60)
-priceBox.BackgroundColor3 = C.bg
+priceBox.Size = UDim2.fromOffset(160, 30)
+priceBox.Position = UDim2.fromOffset(10, 140)
+priceBox.BackgroundColor3 = C.glass2
+priceBox.BackgroundTransparency = 0.5
 priceBox.BorderSizePixel = 0
-priceBox.Font = Enum.Font.Gotham
-priceBox.TextSize = 12
+priceBox.Font = C.mono
+priceBox.TextSize = 14
 priceBox.TextColor3 = C.text
-priceBox.PlaceholderText = "price"
+priceBox.PlaceholderText = "0"
 priceBox.PlaceholderColor3 = C.dim
 priceBox.ClearTextOnFocus = false
 priceBox.Text = ""
 priceBox.Parent = side
-Instance.new("UICorner", priceBox).CornerRadius = UDim.new(0, 5)
+corner(priceBox, 4)
+stroke(priceBox, C.line, 0.4, 1)
 
-local suggestBtn = mkBtn("median", 96, 24, 166, 60, side, 10)
+local suggestBtn = tagBtn("median", 178, 140, 112, 30, side, 10)
 
+mono("DURATION", 10, 178, 200, 12, side, 8, C.head)
 local durButtons = {}
 for i, d in ipairs(DURATIONS) do
-    local b = mkBtn(d, 48, 22, 10 + (i - 1) * 51, 108, side, 10)
+    local b = tagBtn(d, 10 + (i - 1) * 55, 194, 52, 24, side, 10)
     durButtons[d] = b
 end
 
-local slotsLbl = mkLabel("0 / 3 used", 10, 152, 252, 16, side, 10, C.dim)
+mono("LISTING SLOTS", 10, 226, 200, 12, side, 8, C.head)
+local slotsLbl = mono("0 / 3 used", 10, 242, 280, 16, side, 10, C.dim)
 
-local listBtn = mkBtn("LIST NOW", 252, 36, 10, 172, side, 12)
-listBtn.BackgroundColor3 = Color3.fromRGB(38, 78, 56)
-listBtn.TextColor3 = C.good
+local listBtn = neon("LIST NOW", 10, 264, 280, 38, side, Color3.fromRGB(112, 56, 202),
+    Color3.fromRGB(30, 132, 188), 13, true)
 
-local fillBtn = mkBtn("FILL FREE SLOTS", 252, 26, 10, 212, side, 11)
-fillBtn.BackgroundColor3 = Color3.fromRGB(34, 44, 62)
+local fillBtn = tagBtn("FILL FREE SLOTS", 10, 310, 280, 28, side, 10)
 fillBtn.TextColor3 = C.accent
 
-local autoHint = mkLabel("auto keeps the slots filled and relists as lots expire",
-    10, 244, 252, 36, side, 9, C.dim)
+local autoBtn = tagBtn("auto: off", 10, 344, 280, 28, side, 10)
 
-local aLog = mkLabel("", 10, 284, 252, 96, side, 9, C.dim)
+local aLog = mono("// no activity", 10, 380, 280, 126, side, 9, C.dim, C.mono)
+aLog.TextWrapped = true
+aLog.RichText = true
 
-local sideFoot = mkLabel("", 10, 452, 252, 34, side, 9, Color3.fromRGB(110, 118, 132))
-sideFoot.Text = "1 item per listing. Server enforces ~8s between listings."
+local reloadBtn = tagBtn("RELOAD INV", 10, 512, 136, 28, side, 9)
+local cancelBtn = tagBtn("CANCEL ALL", 154, 512, 136, 28, side, 9)
+cancelBtn.TextColor3 = Color3.fromRGB(230, 120, 140)
 
---// bottom bar
-local bar = mkCard(12, 536, 876, 32, auctionView)
-local statusLbl = mkLabel("ready", 10, 8, 856, 20, bar, 10, C.dim)
-statusLbl.TextWrapped = false
-statusLbl.TextYAlignment = Enum.TextYAlignment.Center
+--// footer
+local footer = glass(14, 570, 912, 26, auctionView, { name = "Status", brackets = false, t = 0.4 })
+local statusLbl = mono("ready", 12, 7, 640, 14, footer, 10, C.dim)
+local footHint = mono("1 item / lot  ·  ~8s between lots  ·  no fee", 660, 7, 240, 14, footer, 8, C.dim)
+footHint.TextXAlignment = Enum.TextXAlignment.Right
 
 --=============================================================
 -- AUCTION RENDER
@@ -1519,8 +1754,9 @@ uiA.status = function(txt, color)
 end
 
 uiA.log = function(txt)
-    aLogLines[#aLogLines + 1] = os.date("%H:%M:%S") .. "  " .. txt
-    while #aLogLines > 5 do table.remove(aLogLines, 1) end
+    aLogLines[#aLogLines + 1] = string.format('<font color="#3d7f8f">%s</font>  %s',
+        os.date("%H:%M:%S"), esc(txt))
+    while #aLogLines > 6 do table.remove(aLogLines, 1) end
     aLog.Text = table.concat(aLogLines, "\n")
 end
 
@@ -1545,7 +1781,8 @@ end
 uiA.tabs = function()
     for name, b in pairs(tabButtons) do
         local on = (name == AS.cat)
-        b.BackgroundColor3 = on and C.sel or C.bg
+        b.BackgroundColor3 = on and C.sel or C.glass2
+        b.BackgroundTransparency = on and 0.15 or 0.62
         b.TextColor3 = on and C.accent or C.dim
         local n = (name == "All") and #AS.items or (AS.counts[name] or 0)
         b.Text = name .. ((n > 0) and ("  " .. n) or "")
@@ -1555,15 +1792,28 @@ end
 uiA.duration = function()
     for d, b in pairs(durButtons) do
         local on = (d == AS.duration)
-        b.BackgroundColor3 = on and C.sel or C.bg
+        b.BackgroundColor3 = on and C.sel or C.glass2
+        b.BackgroundTransparency = on and 0.15 or 0.62
         b.TextColor3 = on and C.accent or C.dim
     end
 end
 
 local function selectItem(it)
     AS.selected = it
-    selLbl.Text = string.format("%s\n%s  -  %s", it.label, it.sub, it.cat)
-    selLbl.TextColor3 = C.text
+    dName.Text = it.label
+    dName.TextColor3 = (it.kind == "tower") and C.text or C.gold
+    dChip.Text = it.cat:upper()
+    dChip.TextColor3 = C.accent:Lerp(Color3.new(1, 1, 1), 0.55)
+    dChip.BackgroundColor3 = C.accent
+    dQty.Text = it.sub
+    local img = AS.icons[it.label] or AS.icons[it.key]
+    if img then
+        dIcon.Image = img
+        dIcon.BackgroundTransparency = 1
+    else
+        dIcon.Image = ""
+        dIcon.BackgroundTransparency = 0.4
+    end
     uiA.render()
 end
 
@@ -1583,35 +1833,41 @@ uiA.render = function()
 
         if AS.cat == "All" and it.cat ~= lastCat then
             lastCat = it.cat
-            local head = Instance.new("TextLabel")
-            head.Size = UDim2.new(1, -6, 0, 18)
-            head.BackgroundTransparency = 1
-            head.Font = Enum.Font.GothamBold
-            head.TextSize = 10
-            head.TextColor3 = C.head
-            head.TextXAlignment = Enum.TextXAlignment.Left
+            local head = mono(string.format("%s // %d", string.upper(it.cat), AS.counts[it.cat] or 0),
+                6, 0, 300, 18, invScroll, 9, C.head)
             head.LayoutOrder = order
-            head.Text = string.format("%s   %d", string.upper(it.cat), AS.counts[it.cat] or 0)
-            head.Parent = invScroll
+            head.TextYAlignment = Enum.TextYAlignment.Center
             order = order + 1
             aRows[#aRows + 1] = head
         end
 
         local row = Instance.new("TextButton")
-        row.Size = UDim2.new(1, -6, 0, 26)
-        row.BackgroundColor3 = (AS.selected == it) and C.sel or ((i % 2 == 0) and C.rowAlt or C.row)
+        row.Size = UDim2.new(1, -6, 0, 36)
+        row.BackgroundColor3 = (AS.selected == it) and C.sel or C.row
+        row.BackgroundTransparency = (AS.selected == it) and 0.25 or 0.55
         row.BorderSizePixel = 0
         row.Text = ""
         row.AutoButtonColor = false
         row.LayoutOrder = order
         row.Parent = invScroll
+        corner(row, 4)
         order = order + 1
         aRows[#aRows + 1] = row
 
+        if AS.selected == it then
+            local bar = Instance.new("Frame")
+            bar.Size = UDim2.fromOffset(2, 20)
+            bar.Position = UDim2.fromOffset(0, 6)
+            bar.BackgroundColor3 = C.accent
+            bar.BorderSizePixel = 0
+            bar.Parent = row
+        end
+
         local icon = Instance.new("ImageLabel")
-        icon.Size = UDim2.fromOffset(20, 20)
-        icon.Position = UDim2.fromOffset(6, 3)
+        icon.Size = UDim2.fromOffset(26, 26)
+        icon.Position = UDim2.fromOffset(10, 5)
         icon.BackgroundColor3 = C.bg
+        icon.BackgroundTransparency = 0.55
         icon.BorderSizePixel = 0
         icon.ScaleType = Enum.ScaleType.Fit
         local img = AS.icons[it.label] or AS.icons[it.key]
@@ -1620,31 +1876,17 @@ uiA.render = function()
             icon.BackgroundTransparency = 1
         end
         icon.Parent = row
-        Instance.new("UICorner", icon).CornerRadius = UDim.new(0, 4)
+        corner(icon, 3)
 
-        local nm = Instance.new("TextLabel")
-        nm.Size = UDim2.fromOffset(420, 26)
-        nm.Position = UDim2.fromOffset(34, 0)
-        nm.BackgroundTransparency = 1
-        nm.Font = Enum.Font.GothamSemibold
-        nm.TextSize = 11
-        nm.TextColor3 = (it.kind == "tower") and C.text or C.gold
-        nm.TextXAlignment = Enum.TextXAlignment.Left
+        local nm = mono(it.label, 44, 11, 400, 18, row, 11,
+            (it.kind == "tower") and C.text or C.gold)
         nm.TextTruncate = Enum.TextTruncate.AtEnd
-        nm.Text = it.label
-        nm.Parent = row
+        nm.TextWrapped = false
 
-        local sub = Instance.new("TextLabel")
-        sub.Size = UDim2.fromOffset(100, 26)
-        sub.Position = UDim2.new(1, -106, 0, 0)
-        sub.BackgroundTransparency = 1
-        sub.Font = Enum.Font.Gotham
-        sub.TextSize = 10
-        sub.TextColor3 = C.dim
+        local sub = mono(it.sub, 0, 11, 96, 18, row, 10, C.dim)
+        sub.Position = UDim2.new(1, -106, 0, 11)
         sub.TextXAlignment = Enum.TextXAlignment.Right
-        sub.TextTruncate = Enum.TextTruncate.AtEnd
-        sub.Text = it.sub
-        sub.Parent = row
+        sub.TextWrapped = false
 
         row.MouseButton1Click:Connect(function() selectItem(it) end)
     end
@@ -1652,15 +1894,15 @@ uiA.render = function()
     invScroll.CanvasPosition = Vector2.new(0, 0)
     uiA.tabs()
 
-    slotsLbl.Text = string.format("%d / %d used  -  1 item per listing", AS.myCount, AS.maxListings)
+    slotsLbl.Text = string.format("%d / %d used", AS.myCount, AS.maxListings)
     slotsLbl.TextColor3 = (AS.myCount >= AS.maxListings) and C.bad or C.dim
 
-    aStat.Text = string.format("%s P$   |   listings %d/%d   |   %d items",
-        fmt(AS.premium), AS.myCount, AS.maxListings, #AS.items)
-    aStat.TextColor3 = (AS.myCount >= AS.maxListings) and C.gold or C.dim
-
-    local q = (AS.search ~= "") and ("  |  search: " .. AS.search) or ""
-    uiA.status(string.format("%d items  |  showing %d%s", #AS.items, shown, q))
+    if AS.myCount >= AS.maxListings then
+        uiA.status(string.format("all %d slots used  ·  %s P$  ·  cancel or wait", AS.maxListings, fmt(AS.premium)), C.gold)
+    else
+        local q = (AS.search ~= "") and ("  ·  filter: " .. AS.search) or ""
+        uiA.status(string.format("%d items  ·  showing %d%s", #AS.items, shown, q))
+    end
 end
 
 --=============================================================
@@ -1676,8 +1918,13 @@ local function reloadInventoryUI()
     AS.items = buildItems(inv)
     AS.icons = buildIconMap()
     AS.selected = nil
-    selLbl.Text = "nothing selected"
-    selLbl.TextColor3 = C.dim
+    dName.Text = "nothing selected"
+    dName.TextColor3 = C.dim
+    dChip.Text = "-"
+    dChip.TextColor3 = C.dim
+    dChip.BackgroundColor3 = C.dim
+    dQty.Text = ""
+    dIcon.Image = ""
     refreshMarket()
     uiA.render()
     uiA.duration()
@@ -1756,7 +2003,7 @@ local function suggestPrice()
     end
     if med then
         priceBox.Text = tostring(math.floor(med * 0.95))
-        uiA.status("median " .. fmt(med) .. " - set to 95%", C.dim)
+        uiA.status("median " .. fmt(med) .. "  ·  set to 95%", C.dim)
     else
         uiA.status("no median data - load the sniper first", C.bad)
     end
@@ -1769,19 +2016,15 @@ listBtn.MouseButton1Click:Connect(function()
 end)
 
 fillBtn.MouseButton1Click:Connect(fillSlots)
-cancelBtn.MouseButton1Click:Connect(cancelAllListings)
 reloadBtn.MouseButton1Click:Connect(reloadInventoryUI)
+cancelBtn.MouseButton1Click:Connect(cancelAllListings)
 suggestBtn.MouseButton1Click:Connect(suggestPrice)
 
 autoBtn.MouseButton1Click:Connect(function()
     AS.auto = not AS.auto
     autoBtn.Text = "auto: " .. (AS.auto and "on" or "off")
     autoBtn.TextColor3 = AS.auto and C.good or C.dim
-    autoBtn.BackgroundColor3 = AS.auto and Color3.fromRGB(38, 78, 56) or C.panel
-    autoHint.Text = AS.auto
-        and string.format("keeping %d slots filled with %s", AS.maxListings,
-            AS.selected and AS.selected.label or "?")
-        or "auto keeps the slots filled and relists as lots expire"
+    autoBtn.BackgroundColor3 = AS.auto and Color3.fromRGB(20, 62, 52) or C.glass2
     if AS.auto then autoTick() end
 end)
 
@@ -1799,9 +2042,18 @@ for d, b in pairs(durButtons) do
     end)
 end
 
+local searchPending = false
 searchBox:GetPropertyChangedSignal("Text"):Connect(function()
     AS.search = searchBox.Text
-    uiA.render()
+    -- rebuilding a few hundred rows on every keystroke is wasteful; one
+    -- deferred pass per burst is enough
+    if searchPending then return end
+    searchPending = true
+    task.defer(function()
+        task.wait(0.12)
+        searchPending = false
+        uiA.render()
+    end)
 end)
 
 --=============================================================
@@ -1814,8 +2066,10 @@ local function showTab(which)
     auctionView.Visible = (which == "auction")
     for key, b in pairs(tabBtns) do
         local on = (key == which)
-        b.BackgroundColor3 = on and C.sel or C.bg
+        b.BackgroundColor3 = on and C.sel or C.glass2
+        b.BackgroundTransparency = on and 0.2 or 0.62
         b.TextColor3 = on and C.accent or C.dim
+        tabBars[key].Visible = on
     end
 end
 
@@ -1840,10 +2094,11 @@ conn(UIS.InputBegan, function(input, processed)
 end)
 
 --=============================================================
--- BOOT + TICKER
+-- BOOT + TICKERS
 --=============================================================
 showTab("farm")
 uiF.rebuild()
+uiF.log()
 
 task.spawn(function()
     local inv = readInventory(4)
@@ -1860,9 +2115,6 @@ task.spawn(function()
         if gui.Enabled then
             uiF.refresh()
         end
-
-        -- baskets drop from the doors themselves, so the stock is re-read
-        -- periodically instead of only once at load
         if os.clock() - invReqAt > 30 then
             invReqAt = os.clock()
             requestInventory()
